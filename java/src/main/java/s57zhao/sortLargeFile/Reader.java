@@ -1,3 +1,5 @@
+package s57zhao.sortLargeFile;
+
 import java.io.*;
 import java.util.*;
 import java.util.concurrent.Callable;
@@ -5,15 +7,12 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
-public class DataReader extends Tokenizer {
+class Reader extends FileProcessor {
 
   // think about 24 bins
-  private int SHARD_SIZE = 50;
-  private int MB = 1048576;
+  private int SHARD_SIZE = 1;
   private int chunkCount = 0;
-  private int NUM_THREAD = 4;
-
-  private String TEMP_PATH = "temp";
+  private int numOfThreads = 4;
 
   // each worker read a portion of the file
   class ShardWorker implements Callable<Void> {
@@ -34,11 +33,11 @@ public class DataReader extends Tokenizer {
 
     @Override
     public Void call() {
-      String chunkFilePath = this.outputPath.concat("/chunk-" + this.id + ".txt");
+      String chunkFilePath = this.outputPath.concat("/" + CHUNK_PREFIX + id + ".txt");
       try {
         FileInputStream fis = new FileInputStream(inputPath);
         BufferedReader br = new BufferedReader(new InputStreamReader(fis));
-        OutputStream os = new BufferedOutputStream(new FileOutputStream(chunkFilePath));
+        BufferedOutputStream os = new BufferedOutputStream(new FileOutputStream(chunkFilePath), 10 * MB);
         fis.skip(start);
         while (fis.getChannel().position() <= end) {
           String line = br.readLine();
@@ -48,7 +47,7 @@ public class DataReader extends Tokenizer {
           wordSet.addAll(tokenize(line));
         }
         for (String token : wordSet) {
-          os.write((token + " ").getBytes());
+          os.write((token + "\n").getBytes());
         }
         os.flush();
         br.close();
@@ -60,22 +59,8 @@ public class DataReader extends Tokenizer {
     }
   }
 
-  DataReader() {
-    cleanDir(this.TEMP_PATH);
-  }
-
-  private void cleanDir(String path) {
-    File outFile = new File(path);
-
-    // remove previous files
-    if (outFile.exists()) {
-      for (String dir : outFile.list()) {
-        File curFile = new File(outFile.getPath(), dir);
-        curFile.delete();
-      }
-    }
-
-    outFile.mkdir();
+  Reader() {
+    cleanDir(this.SHARD_PATH);
   }
 
   void setChunkSize(int size) {
@@ -83,12 +68,16 @@ public class DataReader extends Tokenizer {
   }
 
   void setNumThread(int num) {
-    this.NUM_THREAD = num;
+    this.numOfThreads = num;
+  }
+
+  int getChunkCount() {
+    return chunkCount;
   }
 
   void readFile(String inputPath) {
     // start the thread pool
-    ExecutorService pool = Executors.newFixedThreadPool(NUM_THREAD);
+    ExecutorService pool = Executors.newFixedThreadPool(numOfThreads);
     File file = new File(inputPath);
     int unitShardSize = SHARD_SIZE * MB;
     try {
@@ -116,14 +105,12 @@ public class DataReader extends Tokenizer {
         }
 
         chunkCount++;
-        pool.submit(new ShardWorker(inputPath, TEMP_PATH, fileStart, fileEnd, chunkCount));
-        System.out.println(fileStart);
-        System.out.println(fileEnd);
+        pool.submit(new ShardWorker(inputPath, SHARD_PATH, fileStart, fileEnd, chunkCount));
 
         fileStart = fileEnd;
         fileEnd = fileStart + unitShardSize;
       }
-      System.out.println("finished partition, number: " + chunkCount);
+      System.err.println("finished partition, number of partitions: " + chunkCount);
       fis.close();
       pool.shutdown();
 
@@ -132,20 +119,10 @@ public class DataReader extends Tokenizer {
       } catch (InterruptedException e) {
         e.printStackTrace();
       }
-      System.out.println("finished sub sort.");
+      System.err.println("finished sub sort.");
 
     } catch (IOException e) {
       e.printStackTrace();
     }
-  }
-
-  int getChunkCount() {
-    return chunkCount;
-  }
-
-  // test usage
-  public static void main(String args[]) {
-    DataReader ds = new DataReader();
-    ds.readFile("data/enwik9.txt");
   }
 }
