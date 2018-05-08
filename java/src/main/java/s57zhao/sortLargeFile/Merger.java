@@ -1,7 +1,6 @@
 package s57zhao.sortLargeFile;
 
 import java.io.*;
-import java.nio.file.Path;
 import java.util.*;
 
 class Merger extends FileProcessor {
@@ -9,21 +8,20 @@ class Merger extends FileProcessor {
   private static final String MERGE_PATH = "merge";
   private String outputPath = null;
   private int onePassMergeSize = 5;
-  private int chunkCount;
-  private int numPass = 0;
-  private Set<String> sortedSet = new LinkedHashSet<>();
 
-  public void setOnePassMergeSize(int size){
+  void setOnePassMergeSize(int size){
     this.onePassMergeSize = size;
   }
 
-  Merger(int chunkCount, String outputPath){
-    this.chunkCount = chunkCount;
+  Merger(String outputPath){
     this.outputPath = outputPath;
     cleanDir(outputPath);
   }
 
-  // this function will group files into one list
+  // this function will group onePassMergeSize files into one list
+  // and then insert the list to another list to indicate how many rounds the merge will take
+  // if there are more files than onePassMergeSize
+  // several merge pass will be needed
   private List<List<String>> groupFiles(String input) {
     List<List<String>> pathGroups = new ArrayList<>();
 
@@ -32,7 +30,7 @@ class Merger extends FileProcessor {
     if(inputDir.exists()) {
       int count = 0;
       List<String> pathGroup = new ArrayList<>();
-      for (String file : inputDir.list()) {
+      for (String file : Objects.requireNonNull(inputDir.list())) {
         pathGroup.add(inputDir.getPath() + "/" + file);
         count++;
         if(count == onePassMergeSize){
@@ -50,11 +48,12 @@ class Merger extends FileProcessor {
   }
 
   void merge() throws IOException {
+    List<Pair<String, BufferedReader>> fileReaderList = new ArrayList<>();
 
-
-    List<Pair<String, BufferedReader>> externalList = new ArrayList<>();
+    // store each shard into a priority queue
+    // the queue is order by the first word of each shard file
     Queue<Pair<String, BufferedReader>> queue = new PriorityQueue<>(
-      onePassMergeSize //initialCapacity
+      onePassMergeSize
       , new Comparator<Pair<String, BufferedReader>>() {
       public int compare(Pair<String, BufferedReader> p1,
                          Pair<String, BufferedReader> p2) {
@@ -65,37 +64,51 @@ class Merger extends FileProcessor {
     int MERGE_PASS_COUNT = 0;
     List<List<String>> fileGroups;
     String inputPath = SHARD_PATH;
+
     do {
-      fileGroups = groupFiles(inputPath);
       MERGE_PASS_COUNT++;
       String tempOutputDir = MERGE_PATH + MERGE_PASS_COUNT;
+
+      fileGroups = groupFiles(inputPath);
       if(fileGroups.size() == 1){
         tempOutputDir = outputPath;
       }
       cleanDir(tempOutputDir);
       System.err.println("merge pass " + MERGE_PASS_COUNT + " start!");
-      inputPath = tempOutputDir;
 
-      // TODO: I can thread this, but not worth the effort?
+
       for (int index = 0; index < fileGroups.size(); index++) {
+
+        // each group of files will have their own output stream
+        BufferedWriter bw = new BufferedWriter(
+            new FileWriter(tempOutputDir + "/temp-" + index + ".txt"), 20 * MB);
+
+        // reader each file, and store them in format of <String, FileInputReader>
+        // the string is the first line of the file
         for (String filePath : fileGroups.get(index)) {
           FileInputStream fis = new FileInputStream(new File(filePath));
           BufferedReader reader = new BufferedReader(new InputStreamReader(fis));
           String word = reader.readLine();
+          // file is empty
           if (word != null) {
-            externalList.add(new Pair<>(word, reader));
+            fileReaderList.add(new Pair<>(word, reader));
           }
         }
 
-        BufferedOutputStream os = new BufferedOutputStream(
-            new FileOutputStream(tempOutputDir + "/temp-" + index + ".txt"), 20 * MB);
-        queue.addAll(externalList);
+        // add fileReaderList to the priority queue
+        // it will sorted by the first string of the file
+        queue.addAll(fileReaderList);
         String prevKey = "";
+
+
+        // poll one element from the queue each time
+        // write out only if the element is different from the previous one
+        // if the reader is not reach the end, add it back to the priority queue
         while (!queue.isEmpty()) {
           Pair<String, BufferedReader> val = queue.poll();
           String key = val.getKey();
           if (!key.equals(prevKey)) {
-            os.write((key + "\n").getBytes());
+            bw.write((key + "\n"));
             prevKey = key;
           }
 
@@ -108,21 +121,18 @@ class Merger extends FileProcessor {
           }
         }
 
-        os.flush();
-        for (Pair<String, BufferedReader> item : externalList) {
+        // close everything
+        bw.flush();
+        bw.close();
+        for (Pair<String, BufferedReader> item : fileReaderList) {
           item.getValue().close();
         }
-        externalList.clear();
-      }
-    }while(fileGroups.size() > 1);
-  }
 
-  public static void main(String[]args){
-    Merger merger = new Merger(10, "output");
-    try {
-      merger.merge();
-    } catch (IOException e) {
-      e.printStackTrace();
-    }
+        fileReaderList.clear();
+      }
+      System.err.println("merge pass " + MERGE_PASS_COUNT + " end!");
+      // swap for next round
+      inputPath = tempOutputDir;
+    }while(fileGroups.size() > 1);
   }
 }

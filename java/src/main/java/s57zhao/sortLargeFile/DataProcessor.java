@@ -28,10 +28,8 @@ public class DataProcessor {
     reader.setNumThread(numOfThreads);
     reader.readFile(inputDir);
 
-    int chunkCount = reader.getChunkCount();
-
     System.err.println("merge process start!");
-    Merger merger = new Merger(chunkCount, outputDir);
+    Merger merger = new Merger(outputDir);
     merger.setOnePassMergeSize(onePassMergeSize);
     try {
       merger.merge();

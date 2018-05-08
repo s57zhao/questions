@@ -9,7 +9,6 @@ import java.util.concurrent.TimeUnit;
 
 class Reader extends FileProcessor {
 
-  // think about 24 bins
   private int SHARD_SIZE = 1;
   private int chunkCount = 0;
   private int numOfThreads = 4;
@@ -37,30 +36,42 @@ class Reader extends FileProcessor {
       try {
         FileInputStream fis = new FileInputStream(inputPath);
         BufferedReader br = new BufferedReader(new InputStreamReader(fis));
-        BufferedOutputStream os = new BufferedOutputStream(new FileOutputStream(chunkFilePath), 10 * MB);
+
+        BufferedWriter bw = new BufferedWriter(new FileWriter(chunkFilePath));
+        // skip to the start of the target chunk
         fis.skip(start);
-        while (fis.getChannel().position() <= end) {
-          String line = br.readLine();
-          if (line == null) {
-            break;
-          }
+
+        // to indicate where is the end of the chunk
+        long totalRead = 0;
+        String line = br.readLine();
+
+        while (line!=null && totalRead < end-start) {
           wordSet.addAll(tokenize(line));
+          line = br.readLine();
+          if(line!=null) {
+            totalRead += line.getBytes().length;
+          }
         }
+
         for (String token : wordSet) {
-          os.write((token + "\n").getBytes());
+          bw.write((token + "\n"));
         }
-        os.flush();
+
+        bw.flush();
+        bw.close();
         br.close();
         fis.close();
       } catch (IOException e) {
         e.printStackTrace();
       }
+
+      System.err.println("shard " + id + " finished sorting!");
       return null;
     }
   }
 
   Reader() {
-    cleanDir(this.SHARD_PATH);
+    cleanDir(SHARD_PATH);
   }
 
   void setChunkSize(int size) {
@@ -81,8 +92,8 @@ class Reader extends FileProcessor {
     File file = new File(inputPath);
     int unitShardSize = SHARD_SIZE * MB;
     try {
-      long fileStart = 0;
-      long fileEnd = unitShardSize;
+      long shardStart = 0;
+      long shardEnd;
 
       FileInputStream fis = new FileInputStream(file);
 
@@ -94,32 +105,32 @@ class Reader extends FileProcessor {
         int charRead;
         do {
           charRead = (char) fis.read();
-          fileEnd++;
         } while (charRead != '\n' && charRead != -1 && fis.getChannel().position() < file.length());
+        shardEnd = fis.getChannel().position();
 
-        fileEnd = fis.getChannel().position();
+        System.err.println("shard start: " + shardStart);
+        System.err.println("shard end: " + shardEnd);
 
-        if (fileEnd >= file.length()) {
-          fileEnd = file.length();
+        if (shardEnd >= file.length()) {
+          shardEnd = file.length();
           endFile = true;
         }
 
         chunkCount++;
-        pool.submit(new ShardWorker(inputPath, SHARD_PATH, fileStart, fileEnd, chunkCount));
+        pool.submit(new ShardWorker(inputPath, SHARD_PATH, shardStart, shardEnd, chunkCount));
 
-        fileStart = fileEnd;
-        fileEnd = fileStart + unitShardSize;
+        shardStart = shardEnd;
       }
       System.err.println("finished partition, number of partitions: " + chunkCount);
       fis.close();
       pool.shutdown();
 
       try {
-        pool.awaitTermination(1, TimeUnit.HOURS);
+        pool.awaitTermination(10, TimeUnit.MINUTES);
       } catch (InterruptedException e) {
         e.printStackTrace();
       }
-      System.err.println("finished sub sort.");
+      System.err.println("finished sort on each shard.");
 
     } catch (IOException e) {
       e.printStackTrace();

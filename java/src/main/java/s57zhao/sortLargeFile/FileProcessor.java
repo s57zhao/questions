@@ -7,10 +7,11 @@ import java.util.StringTokenizer;
 import java.util.regex.Pattern;
 
 class FileProcessor {
-  protected final static int MB = 1048576;
   private static final Pattern PATTERN = Pattern.compile("(^[^a-z]+|[^a-z]+$)");
+
+  static final int MB = 1048576;
   static final String CHUNK_PREFIX = "chunk-";
-  protected final static String SHARD_PATH = "shard";
+  static final String SHARD_PATH = "shard";
 
   static List<String> tokenize(String input) {
     List<String> tokens = new ArrayList<>();
@@ -25,6 +26,7 @@ class FileProcessor {
     return tokens;
   }
 
+  // used to clean up the directory if there are already files there
   static void cleanDir(String path) {
     File outFile = new File(path);
 
@@ -35,7 +37,6 @@ class FileProcessor {
         curFile.delete();
       }
     }
-
     outFile.mkdir();
   }
 }
